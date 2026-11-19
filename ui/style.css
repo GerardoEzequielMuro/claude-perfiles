@@ -80,13 +80,18 @@ h1 { font: 600 21px/1.2 var(--font-display); margin: 0; letter-spacing: -0.01em;
 }
 .icon-btn:hover { background: var(--raised); border-color: var(--line-strong); color: var(--text); }
 
-/* ---------- notice */
+/* ---------- notice (contenedor #notice con uno o más avisos) */
+#notice { display: flex; flex-direction: column; gap: 8px; margin: 0 32px 14px; }
+#notice[hidden] { display: none; }
 .notice {
-  margin: 0 32px 14px; padding: 11px 14px; border-radius: 11px;
+  padding: 10px 12px 10px 14px; border-radius: 11px;
   background: #2A1A10; border: 1px solid #5A3A20; color: #F0C9A8;
-  display: flex; gap: 10px; align-items: flex-start; font-size: 13px;
+  display: flex; gap: 10px; align-items: center; font-size: 13px; line-height: 1.45;
 }
-.notice .ic { margin-top: 2px; color: #E3A857; }
+.notice .ic { align-self: flex-start; margin-top: 2px; color: #E3A857; flex: none; }
+.notice-text { flex: 1; min-width: 0; }
+.notice-text strong { color: #F7DCC4; font-weight: 600; }
+.notice .btn { flex: none; padding: 6px 12px; font-size: 12.5px; }
 .notice a { color: #F3B497; }
 
 /* ---------- grid */

@@ -10,6 +10,7 @@ const accounts = {};      // nombre -> mail de Code (se actualiza en los scans p
 const used = {};          // nombre -> Desktop ya usado
 let tick = 0;
 let busy = false;
+let claudeMissing = false; // solo se mide en los scans profundos
 
 // ---------------------------------------------------------------- utilidades
 
@@ -40,13 +41,14 @@ function shade(hex, f) {
 }
 
 let toastTimer;
-function toast(msg, err = false) {
+// long: avisos que hay que leer (terminal que falta, permisos) quedan más tiempo en pantalla
+function toast(msg, err = false, long = false) {
   const t = $("toast");
   t.textContent = msg;
   t.classList.toggle("err", err);
   t.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => (t.hidden = true), err ? 6000 : 3500);
+  toastTimer = setTimeout(() => (t.hidden = true), err || long ? 8000 : 3500);
 }
 async function run(cmd, args, okMsg) {
   try {
@@ -66,7 +68,10 @@ async function refresh(deep = false) {
   busy = true;
   try {
     snap = await invoke("snapshot", { deep });
-    if (deep) for (const p of snap.profiles) { accounts[p.name] = p.account; used[p.name] = p.desktop_used; }
+    if (deep) {
+      for (const p of snap.profiles) { accounts[p.name] = p.account; used[p.name] = p.desktop_used; }
+      claudeMissing = !snap.claude_found;
+    }
     render();
   } catch (e) {
     console.error(e);
@@ -86,12 +91,29 @@ function render() {
   const s = snap;
   document.documentElement.dataset.os = s.os;
 
-  // aviso si falta Claude Desktop
-  const notice = $("notice");
+  // avisos persistentes: se ven hasta que se resuelve la causa
+  const notes = [];
+  if (s.terminal_missing) {
+    const fallback = s.terminals.find((t) => t.id === s.terminal);
+    notes.push(el("div", { class: "notice", role: "status" }, icon("alert"),
+      el("div", { class: "notice-text" },
+        el("strong", {}, `${s.terminal_missing} no está instalada en esta computadora.`),
+        ` Mientras tanto Claude Code se abre en ${fallback ? fallback.label : "la terminal del sistema"}.`),
+      el("button", { class: "btn soft", "data-key": "pick-terminal", onclick: (e) => terminalMenu(e.currentTarget) }, "Elegir terminal")));
+  }
   if (!s.desktop_version) {
-    notice.replaceChildren(icon("alert"), el("div", {}, "No encuentro Claude Desktop en esta computadora. Los perfiles de Code funcionan igual; para Desktop, instalalo desde claude.ai/download y volvé a abrir esta app."));
-    notice.hidden = false;
-  } else notice.hidden = true;
+    notes.push(el("div", { class: "notice", role: "status" }, icon("alert"),
+      el("div", { class: "notice-text" }, el("strong", {}, "No encuentro Claude Desktop."), " Los perfiles de Code funcionan igual."),
+      el("button", { class: "btn soft", "data-key": "get-desktop", onclick: () => run("open_download", {}, "Abrí la descarga de Claude Desktop. Cuando lo instales, aparece acá solo.") }, "Descargar Claude Desktop")));
+  }
+  if (claudeMissing) {
+    notes.push(el("div", { class: "notice", role: "status" }, icon("alert"),
+      el("div", { class: "notice-text" }, el("strong", {}, "No encuentro Claude Code en esta computadora."), " Sin él, la terminal se abre pero no arranca Claude."),
+      s.claude_install ? el("button", { class: "btn soft", "data-key": "install-claude", title: s.claude_install, onclick: () => installTool("claude", "Claude Code") }, "Instalar Claude Code") : null));
+  }
+  const box = $("notice");
+  box.replaceChildren(...notes);
+  box.hidden = notes.length === 0;
 
   const grid = $("grid");
   const focused = document.activeElement && document.activeElement.dataset.key;
@@ -161,10 +183,39 @@ async function openDesktop(p) {
   setTimeout(() => refresh(true), 1500);
 }
 async function openCode(p) {
-  const ok = await run("open_code", { name: p.name });
-  if (ok) toast(accounts[p.name] ? `Abriendo Code · ${p.name}` : `Abriendo Code · ${p.name}. La primera vez escribí /login.`);
+  try {
+    const note = await invoke("open_code", { name: p.name });
+    if (note) toast(note, false, true);
+    else toast(accounts[p.name] ? `Abriendo Code · ${p.name}` : `Abriendo Code · ${p.name}. La primera vez escribí /login.`);
+  } catch (e) {
+    toast(String(e), true);
+  }
   setTimeout(() => refresh(true), 4000);
 }
+// Instala en una ventana visible (o abre la descarga) y después vigila hasta que aparezca,
+// para avisar sin que haga falta reiniciar la app.
+const watching = new Set();
+async function installTool(id, label) {
+  let msg;
+  try { msg = await invoke("install_tool", { id }); } catch (e) { toast(String(e), true); return; }
+  toast(msg, false, true);
+  if (watching.has(id)) return;
+  watching.add(id);
+  const isReady = () => id === "claude" ? !claudeMissing : !!snap.terminals.find((t) => t.id === id && t.available);
+  const started = Date.now();
+  const timer = setInterval(async () => {
+    await invoke("rescan_terminals").catch(() => {});
+    await refresh(true);
+    if (isReady()) {
+      clearInterval(timer); watching.delete(id);
+      const usable = id !== "claude" && snap.terminal !== id;
+      toast(usable ? `${label} quedó instalada. Elegila en el menú de terminales, abajo a la izquierda.` : `${label} quedó instalado.`, false, true);
+    } else if (Date.now() - started > 10 * 60 * 1000) {
+      clearInterval(timer); watching.delete(id);
+    }
+  }, 5000);
+}
+
 async function pickFolder(p) {
   const changed = await run("pick_folder", { name: p.name });
   if (changed) refresh();
@@ -218,13 +269,28 @@ function profileMenu(anchor, p) {
   showMenu(anchor, items);
 }
 
-function terminalMenu(anchor) {
+async function terminalMenu(anchor) {
+  // volver a detectar: puede haber instalado o desinstalado una terminal con la app abierta
+  await invoke("rescan_terminals").catch(() => {});
+  await refresh();
   const s = snap;
   const cur = s.terminals.find((t) => t.id === s.terminal);
   const items = [mLabel("Claude Code se abre en")];
-  for (const t of s.terminals) {
-    items.push(mItem(t.label, null, async () => { await run("set_terminal", { id: t.id }); refresh(); },
-      { tick: t.id === s.terminal, disabled: !t.available, hint: t.available ? t.hint : "no instalado" }));
+  for (const t of s.terminals.filter((t) => t.available)) {
+    const inUse = t.id === s.terminal;
+    const hint = inUse && s.terminal_missing ? "se usa mientras tanto" : t.hint;
+    items.push(mItem(t.label, null, async () => { await run("set_terminal", { id: t.id }, `Listo: Code se abre en ${t.label}.`); refresh(); },
+      { tick: inUse && !s.terminal_missing, hint }));
+  }
+  const missing = s.terminals.filter((t) => !t.available);
+  if (missing.length) {
+    items.push(mSep(), mLabel("No instaladas"));
+    for (const t of missing) {
+      const saved = s.terminal_missing === t.label ? "la elegida · " : "";
+      items.push(t.install
+        ? mItem(`Instalar ${t.label}`, "download", () => installTool(t.id, t.label), { hint: saved + t.install })
+        : mItem(t.label, "download", () => {}, { disabled: true, hint: "no instalada" }));
+    }
   }
   if (cur && cur.tabs) {
     items.push(mSep());
@@ -361,6 +427,16 @@ document.addEventListener("keydown", (e) => {
   if (mod && e.key.toLowerCase() === "r") e.preventDefault(); // sin recargar la webview
 });
 document.addEventListener("contextmenu", (e) => { if (!e.target.closest("input")) e.preventDefault(); });
-document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(true); });
+document.addEventListener("visibilitychange", async () => {
+  if (document.hidden) return;
+  await invoke("rescan_terminals").catch(() => {});
+  if (snap && !snap.desktop_version) await invoke("refresh_desktop").catch(() => {}); // por si lo instaló recién
+  refresh(true);
+});
+// avisos de acciones que no salieron de la ventana (bandeja, atajos del Escritorio)
+window.__TAURI__.event.listen("notice", (e) => {
+  toast(e.payload.message, e.payload.error, true);
+  refresh(true);
+});
 
 loop();

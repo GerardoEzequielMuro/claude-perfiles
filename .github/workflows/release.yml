@@ -38,6 +38,12 @@ jobs:
 
       - run: npm ci
 
+      - name: Tests
+        working-directory: src-tauri
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then CP_TEST_MANIFEST=1 cargo test --lib; else cargo test --lib; fi
+
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -45,11 +51,13 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: "Claude Perfiles ${{ github.ref_name }}"
           releaseBody: |
-            **Windows:** bajá el `.exe` (setup) y ejecutalo. Si SmartScreen avisa, tocá *Más información* y después *Ejecutar de todas formas*.
-            **Mac:** bajá el `.dmg` y arrastrá la app a Aplicaciones. La primera vez abrila con clic derecho y *Abrir*. Si macOS no te deja, andá a Ajustes del Sistema, *Privacidad y seguridad*, *Abrir de todos modos*.
+            **Windows:** bajá `ClaudePerfiles-Windows.exe` y ejecutalo. Si aparece "Windows protegió su PC", tocá *Más información* y después *Ejecutar de todas formas*.
 
-            La app no está firmada todavía. El código está acá mismo y los instaladores se compilan en GitHub Actions.
-          releaseDraft: false
+            **Mac (macOS 11 o más nuevo):** bajá `ClaudePerfiles-Mac.dmg` y arrastrá la app a Aplicaciones. La primera vez macOS dice que no la puede abrir: tocá *OK*, andá a *Ajustes del Sistema → Privacidad y seguridad*, bajá hasta *Claude Perfiles* y tocá *Abrir de todos modos* (te pide tu contraseña). Es una sola vez.
+
+            La app todavía no está firmada con certificado. El código está en este repo y los instaladores se compilan acá, en GitHub Actions.
+          # Borrador: se revisa y se publica a mano.
+          releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
 

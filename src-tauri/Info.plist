@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Sin esta clave macOS no muestra el pedido de permiso de Automatización y el AppleScript
+       que abre Terminal/iTerm2 falla en silencio (-1743). Tauri la mezcla en el Info.plist final. -->
+  <key>NSAppleEventsUsageDescription</key>
+  <string>Claude Perfiles abre Claude Code en Terminal o iTerm2 con la cuenta del perfil que elegiste.</string>
+</dict>
+</plist>

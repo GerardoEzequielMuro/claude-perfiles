@@ -1,4 +1,5 @@
 mod core;
+mod term;
 
 use crate::core as c;
 use serde::Serialize;
@@ -36,8 +37,14 @@ struct Snapshot {
     version: String,
     desktop_version: Option<String>,
     profiles: Vec<ProfileView>,
-    terminals: Vec<c::TermInfo>,
+    terminals: Vec<term::TermInfo>,
+    /// Terminal que se usa de verdad.
     terminal: String,
+    /// Nombre de la terminal guardada si ya no está instalada (la UI avisa).
+    terminal_missing: Option<String>,
+    claude_found: bool,
+    /// Cómo se instala Claude Code desde la app (texto del botón).
+    claude_install: Option<String>,
     new_window: bool,
     minimize_to_tray: bool,
     autostart: bool,
@@ -47,6 +54,7 @@ struct Snapshot {
 const OS: &str = if cfg!(target_os = "macos") { "mac" } else if cfg!(windows) { "windows" } else { "other" };
 
 fn snapshot_inner(app: &AppHandle, st: &AppState, deep: bool) -> Snapshot {
+    let terminals = term::terminals(); // antes de tomar el lock del store
     let desktop = st.desktop.lock().unwrap().clone();
     let mut store = st.store.lock().unwrap();
     let names = c::profile_names(&store);
@@ -68,14 +76,17 @@ fn snapshot_inner(app: &AppHandle, st: &AppState, deep: bool) -> Snapshot {
             }
         })
         .collect();
-    let terminal = c::resolve_terminal(store.terminal.as_deref());
+    let r = term::resolve(store.terminal.as_deref(), &terminals);
     Snapshot {
         os: OS,
         version: app.package_info().version.to_string(),
         desktop_version: desktop.map(|d| d.version),
         profiles,
-        terminals: c::terminals(),
-        terminal,
+        terminals,
+        terminal: r.id,
+        terminal_missing: r.missing,
+        claude_found: if deep { term::claude_found() } else { true },
+        claude_install: term::claude_install_hint(),
         new_window: store.new_window,
         minimize_to_tray: store.minimize_to_tray,
         autostart: app.autolaunch().is_enabled().unwrap_or(false),
@@ -86,6 +97,26 @@ fn snapshot_inner(app: &AppHandle, st: &AppState, deep: bool) -> Snapshot {
 #[tauri::command]
 async fn snapshot(app: AppHandle, st: State<'_, AppState>, deep: bool) -> Result<Snapshot, String> {
     Ok(snapshot_inner(&app, &st, deep))
+}
+
+#[tauri::command]
+async fn open_download() -> Result<(), String> {
+    term::open_url("https://claude.ai/download")
+}
+
+#[tauri::command]
+async fn install_tool(id: String) -> Result<String, String> {
+    let r = term::install(&id);
+    if let Err(e) = &r {
+        log_error(e);
+    }
+    r
+}
+
+#[tauri::command]
+async fn rescan_terminals() -> Result<(), String> {
+    term::invalidate();
+    Ok(())
 }
 
 #[tauri::command]
@@ -105,23 +136,23 @@ async fn open_desktop(st: State<'_, AppState>, name: String) -> Result<(), Strin
     c::launch_desktop(&d, &name)
 }
 
-fn do_open_code(st: &AppState, name: &str) -> Result<(), String> {
+fn do_open_code(st: &AppState, name: &str) -> Result<Option<String>, String> {
     let (folder, color, terminal, new_window) = {
         let mut s = st.store.lock().unwrap();
         let m = c::meta(&mut s, name).clone();
         (m.code_folder, m.color, s.terminal.clone(), s.new_window)
     };
-    c::launch_code(&c::CodeLaunch {
+    term::launch_code(&term::CodeLaunch {
         name,
         folder: folder.map(PathBuf::from).unwrap_or_else(c::home),
         color: color.unwrap_or_else(|| c::PALETTE[0].into()),
-        terminal: c::resolve_terminal(terminal.as_deref()),
+        saved: terminal,
         new_window,
     })
 }
 
 #[tauri::command]
-async fn open_code(st: State<'_, AppState>, name: String) -> Result<(), String> {
+async fn open_code(st: State<'_, AppState>, name: String) -> Result<Option<String>, String> {
     do_open_code(&st, &name)
 }
 
@@ -253,6 +284,7 @@ async fn shortcuts(st: State<'_, AppState>, name: String) -> Result<(), String> 
 
 #[tauri::command]
 async fn set_terminal(st: State<'_, AppState>, id: String) -> Result<(), String> {
+    term::invalidate();
     let mut s = st.store.lock().unwrap();
     s.terminal = Some(id);
     c::save(&s)
@@ -318,21 +350,50 @@ fn tray_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     Ok(menu)
 }
 
-fn handle_cli(app: &AppHandle, args: &[String]) -> bool {
+/// Mensaje para el usuario cuando la acción no vino de la ventana (bandeja o atajo): si la
+/// ventana está visible va como aviso dentro de la app; si no, como diálogo del sistema.
+/// `then` corre cuando el usuario lo cierra (o enseguida si no hay nada que mostrar).
+fn tell(app: &AppHandle, result: Result<Option<String>, String>, then: impl FnOnce() + Send + 'static) {
+    let (msg, err) = match result {
+        Ok(None) => return then(),
+        Ok(Some(m)) => (m, false),
+        Err(e) => {
+            log_error(&e);
+            (e, true)
+        }
+    };
+    let visible = app.get_webview_window("main").and_then(|w| w.is_visible().ok()).unwrap_or(false);
+    if visible {
+        use tauri::Emitter;
+        let _ = app.emit("notice", serde_json::json!({ "message": msg, "error": err }));
+        return then();
+    }
+    let kind = if err { tauri_plugin_dialog::MessageDialogKind::Error } else { tauri_plugin_dialog::MessageDialogKind::Info };
+    app.dialog().message(msg).title("Claude Perfiles").kind(kind).show(move |_| then());
+}
+
+fn desktop_action(st: &AppState, n: &str) -> Result<Option<String>, String> {
+    let d = st.desktop.lock().unwrap().clone().or_else(c::find_desktop);
+    d.ok_or_else(|| "No encuentro Claude Desktop instalado. Bajalo de claude.ai/download.".to_string())
+        .and_then(|d| c::launch_desktop(&d, n))
+        .map(|_| None)
+}
+
+/// Atajos del Escritorio (--desktop/--code NOMBRE). `exit_after`: no había otra instancia
+/// abierta, así que la app se cierra después de lanzar (y de mostrar el aviso, si hay).
+fn handle_cli(app: &AppHandle, args: &[String], exit_after: bool) -> bool {
     let st = app.state::<AppState>();
     let mut it = args.iter().skip(1);
     while let Some(a) = it.next() {
         if a == "--desktop" || a == "--code" {
             if let Some(n) = it.next() {
-                let r = if a == "--desktop" {
-                    let d = st.desktop.lock().unwrap().clone().or_else(c::find_desktop);
-                    d.ok_or("No encuentro Claude Desktop".to_string()).and_then(|d| c::launch_desktop(&d, n))
-                } else {
-                    do_open_code(&st, n)
-                };
-                if let Err(e) = r {
-                    log_error(&e);
-                }
+                let r = if a == "--desktop" { desktop_action(&st, n) } else { do_open_code(&st, n) };
+                let h = app.clone();
+                tell(app, r, move || {
+                    if exit_after {
+                        h.exit(0);
+                    }
+                });
                 return true;
             }
         }
@@ -364,15 +425,17 @@ pub fn run() {
     };
     {
         let mut s = state.store.lock().unwrap();
-        if s.terminal.as_deref().map_or(true, |t| t == "wezterm") {
-            s.terminal = Some(c::default_terminal());
+        // Primer arranque: se guarda la terminal del sistema. Si ya había una guardada que no
+        // está instalada NO se toca: la UI avisa y el usuario elige.
+        if s.terminal.as_deref().map_or(true, |t| t.is_empty()) {
+            s.terminal = Some(term::system_default(&term::terminals()));
             let _ = c::save(&s);
         }
     }
 
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
-            if !handle_cli(app, &argv) {
+            if !handle_cli(app, &argv, false) {
                 show_main(app);
             }
         }))
@@ -382,6 +445,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             snapshot,
             refresh_desktop,
+            rescan_terminals,
+            install_tool,
+            open_download,
             open_desktop,
             open_code,
             stop_desktop,
@@ -401,10 +467,10 @@ pub fn run() {
         .setup(move |app| {
             let handle = app.handle().clone();
 
-            // Atajo del Escritorio (--desktop/--code) sin otra instancia abierta: lanzar y salir.
+            // Atajo del Escritorio (--desktop/--code) sin otra instancia abierta: lanzar y salir
+            // (después del aviso, si hay uno). Sin bandeja ni ventana.
             if cli_action {
-                handle_cli(&handle, &std::env::args().collect::<Vec<_>>());
-                handle.exit(0);
+                handle_cli(&handle, &std::env::args().collect::<Vec<_>>(), true);
                 return Ok(());
             }
 
@@ -426,15 +492,16 @@ pub fn run() {
                             app.exit(0);
                             Ok(())
                         }
-                        _ if id.starts_with("d:") => {
-                            let d = st.desktop.lock().unwrap().clone();
-                            d.ok_or("No encuentro Claude Desktop".to_string()).and_then(|d| c::launch_desktop(&d, &id[2..]))
+                        _ if id.starts_with("d:") => desktop_action(&st, &id[2..]).map(|_| ()),
+                        _ if id.starts_with("c:") => {
+                            let r = do_open_code(&st, &id[2..]);
+                            tell(app, r, || {});
+                            Ok(())
                         }
-                        _ if id.starts_with("c:") => do_open_code(&st, &id[2..]),
                         _ => Ok(()),
                     };
                     if let Err(e) = r {
-                        log_error(&e);
+                        tell(app, Err(e), || {});
                     }
                 })
                 .on_tray_icon_event(|tray, ev| {

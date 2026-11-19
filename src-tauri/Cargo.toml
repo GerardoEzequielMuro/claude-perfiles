@@ -1,6 +1,6 @@
 [package]
 name = "claude-perfiles"
-version = "2.0.0"
+version = "2.1.0"
 description = "Claude Perfiles"
 edition = "2021"
 publish = false
@@ -25,6 +25,8 @@ dirs = "6"
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"
 mslnk = "0.1"
+# ShellExecuteW: abre los alias de apps de la Store (wt.exe) donde CreateProcess falla con el error 1920
+windows-sys = { version = "0.61", features = ["Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 
 [profile.release]
 opt-level = "s"

@@ -1,0 +1,74 @@
+name: CI
+
+# En cada push y PR: tests en Windows y Mac, chequeos que solo se pueden hacer en una Mac
+# (AppleScript que compila, detección real de terminales, Info.plist y firma ad-hoc del .app)
+# y los instaladores como artefactos para probarlos sin publicar un release.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - run: npm ci
+
+      - name: Tests (Windows)
+        if: runner.os == 'Windows'
+        working-directory: src-tauri
+        env:
+          CP_TEST_MANIFEST: "1"
+        run: cargo test --lib
+
+      - name: Instalar iTerm2 para probar su AppleScript y la detección
+        if: runner.os == 'macOS'
+        run: brew install --cask iterm2
+
+      - name: Tests (Mac), incluidos los que necesitan macOS
+        if: runner.os == 'macOS'
+        working-directory: src-tauri
+        env:
+          CP_EXPECT: iterm
+        run: |
+          cargo test --lib
+          cargo test --lib -- --ignored mac_
+
+      - name: Build
+        run: npm run tauri build -- ${{ runner.os == 'macOS' && '--target universal-apple-darwin --bundles dmg' || '--bundles nsis' }}
+
+      - name: Revisar el .app (permiso de Automatización y firma)
+        if: runner.os == 'macOS'
+        run: |
+          APP=$(find src-tauri/target/universal-apple-darwin/release/bundle/macos -name "*.app" -maxdepth 1 | head -1)
+          plutil -p "$APP/Contents/Info.plist" | grep NSAppleEventsUsageDescription
+          codesign -dv "$APP" 2>&1 | tee /dev/stderr | grep -q "Signature=adhoc"
+          lipo -archs "$APP"/Contents/MacOS/*
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: instalador-${{ runner.os }}
+          path: |
+            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+          retention-days: 14

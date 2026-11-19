@@ -1,9 +1,10 @@
 {
   "name": "claude-perfiles",
   "private": true,
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Varias cuentas de Claude Desktop y Claude Code en paralelo, en Windows y Mac.",
   "scripts": {
+    "tauri": "tauri",
     "dev": "tauri dev",
     "build": "tauri build",
     "icons": "tauri icon assets/icon.png"
