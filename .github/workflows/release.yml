@@ -11,7 +11,25 @@ permissions:
   contents: write
 
 jobs:
+  create-release:
+    # Un solo borrador para los dos builds: los borradores no se encuentran por tag, así que si
+    # cada build lo creara por su cuenta quedarían dos.
+    runs-on: ubuntu-latest
+    outputs:
+      id: ${{ steps.r.outputs.id }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: r
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" --draft --title "Claude Perfiles $TAG" --notes-file .github/release-notes.md
+          ID=$(gh api "repos/${{ github.repository }}/releases" --jq ".[] | select(.tag_name==\"$TAG\" and .draft) | .id" | head -1)
+          echo "id=$ID" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: create-release
     strategy:
       fail-fast: false
       matrix:
@@ -48,22 +66,12 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "Claude Perfiles ${{ github.ref_name }}"
-          releaseBody: |
-            **Windows:** bajá `ClaudePerfiles-Windows.exe` y ejecutalo. Si aparece "Windows protegió su PC", tocá *Más información* y después *Ejecutar de todas formas*.
-
-            **Mac (macOS 11 o más nuevo):** bajá `ClaudePerfiles-Mac.dmg` y arrastrá la app a Aplicaciones. La primera vez macOS dice que no la puede abrir: tocá *OK*, andá a *Ajustes del Sistema → Privacidad y seguridad*, bajá hasta *Claude Perfiles* y tocá *Abrir de todos modos* (te pide tu contraseña). Es una sola vez.
-
-            La app todavía no está firmada con certificado. El código está en este repo y los instaladores se compilan acá, en GitHub Actions.
-          # Borrador: se revisa y se publica a mano.
-          releaseDraft: true
-          prerelease: false
+          releaseId: ${{ needs.create-release.outputs.id }}
           args: ${{ matrix.args }}
 
   stable-names:
     # Copias con nombre fijo para que la página de descarga tenga links permanentes.
-    needs: build
+    needs: [create-release, build]
     runs-on: ubuntu-latest
     steps:
       - env:
