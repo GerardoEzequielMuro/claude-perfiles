@@ -24,8 +24,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.ref_name }}
         run: |
-          gh release create "$TAG" --draft --title "Claude Perfiles $TAG" --notes-file .github/release-notes.md
-          ID=$(gh api "repos/${{ github.repository }}/releases" --jq ".[] | select(.tag_name==\"$TAG\" and .draft) | .id" | head -1)
+          ID=$(gh api -X POST "repos/${{ github.repository }}/releases" -f tag_name="$TAG" -f name="Claude Perfiles $TAG" -F draft=true -F body=@.github/release-notes.md --jq .id)
+          test -n "$ID"
           echo "id=$ID" >> "$GITHUB_OUTPUT"
 
   build:
