@@ -62,7 +62,15 @@ jobs:
       - name: Revisar el .app (permiso de Automatización y firma)
         if: runner.os == 'macOS'
         run: |
-          APP=$(find src-tauri/target/universal-apple-darwin/release/bundle/macos -name "*.app" -maxdepth 1 | head -1)
+          find src-tauri/target/universal-apple-darwin/release/bundle -maxdepth 3 | head -30
+          APP=$(find src-tauri/target/universal-apple-darwin/release/bundle -name "*.app" -maxdepth 3 | head -1)
+          if [ -z "$APP" ]; then
+            # solo hay .dmg: se monta y se revisa la app de adentro, que es la que baja la gente
+            DMG=$(find src-tauri/target/universal-apple-darwin/release/bundle/dmg -name "*.dmg" | head -1)
+            hdiutil attach "$DMG" -nobrowse -mountpoint /tmp/cpdmg
+            APP=$(find /tmp/cpdmg -name "*.app" -maxdepth 1 | head -1)
+          fi
+          echo "APP=$APP"
           plutil -p "$APP/Contents/Info.plist" | grep NSAppleEventsUsageDescription
           codesign -dv "$APP" 2>&1 | tee /dev/stderr | grep "Signature=adhoc"
           lipo -archs "$APP"/Contents/MacOS/*
