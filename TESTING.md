@@ -40,7 +40,11 @@ Solo en Mac (CI, `cargo test --lib -- --ignored mac_`):
 | `winget install` de los 4 paquetes (`Anthropic.ClaudeCode`, `Microsoft.WindowsTerminal`, `Warp.Warp`, `Eugeny.Tabby`) | probado | `winget show` encuentra los 4; el install de WT corrido de verdad |
 | Ventana visible de instalación desde la app (winget corre y la ventana queda abierta) | probado | con `--install wt` (flag solo de desarrollo) |
 | Aviso "No encuentro Claude Code" con botón Instalar | probado | captura con datos de prueba |
-| Code en Warp y en Tabby | probado en v1/v2.0 | sin cambios de lógica en Windows salvo `shell = "pwsh"/"powershell"` en el TOML de Warp |
+| Code en Warp (build de release 2.1.0, app cerrada) | probado | `claude.exe ← powershell ← warp.exe`; TOML con `shell = "powershell"` |
+| Code en Tabby (build de release 2.1.0) | probado | `claude.exe ← powershell ← Tabby.exe` |
+| Primer arranque sin configuración | probado | toma los perfiles que ya existían y elige Windows Terminal |
+| Carpeta de Code en la raíz de un disco (`D:\`) | test | la barra final se duplica para no romper la comilla |
+| Instalador de release (el `.exe` de CI, MSVC) | probado | se instala sin admin, abre y lanza Code; Avast no lo bloqueó ni lo mandó a cuarentena |
 
 **Fallado y corregido:** desde la app (con WebView2 cargado) no se puede activar `wt.exe`, que es un alias de app de la Store. CreateProcess da error 1920 y ShellExecute da error 5 con la app abierta, o devuelve OK sin abrir nada si la app se cierra enseguida. Pasa igual con una copia limpia del exe, así que no es un shim de compatibilidad. Ahora se lanza con un `cmd /c start` hijo, que anda en los dos casos. Si falla, abre PowerShell y avisa. Probado con la app abierta y con la app cerrada (atajo del Escritorio).
 
@@ -76,4 +80,4 @@ Si algo falla, una captura y la versión de macOS alcanzan para arreglarlo.
 - La app no está firmada: SmartScreen y Gatekeeper avisan la primera vez. La firma (Apple USD 99 por año, Windows con certificado) es una decisión pendiente.
 - Warp en Windows: el comando usa sintaxis de PowerShell y el TOML pide `shell = "pwsh"` o `"powershell"`. Si Warp no respeta `shell`, depende de que la shell por defecto de Warp sea PowerShell.
 - Sin winget, la app no corre `irm … | iex` (un antivirus lo vería como un descargador): abre la guía oficial de instalación.
-- El build de release (MSVC, el que bajan los colegas) solo lo prueba CI. Falta instalarlo en una PC y pasarle Avast.
+- Antivirus: el instalador se probó bajado por `gh` e instalado en silencio, y Avast no lo marcó. Falta el camino de un colega: bajarlo con el navegador (Mark of the Web, SmartScreen) e instalarlo con el asistente.

@@ -759,7 +759,12 @@ fn wt_args(name: &str, color: &str, folder: &str, env_line: &str, new_window: bo
     }
     v.push(format!("--title \"{}\" --suppressApplicationTitle", name.replace('"', "")));
     v.push(format!("--tabColor \"{}\"", color));
-    v.push(format!("-d \"{}\"", esc(folder)));
+    // Una barra final antes de la comilla la escaparía ("D:\" se leería como D:"): se duplica.
+    let mut dir = esc(folder);
+    if dir.ends_with('\\') {
+        dir.push('\\');
+    }
+    v.push(format!("-d \"{}\"", dir));
     let ps = format!("{}\\; claude", esc(env_line));
     v.push(format!("powershell.exe -NoLogo -NoExit -Command \"{}\"", ps.replace('"', "\\\"")));
     v
@@ -1081,6 +1086,8 @@ mod tests {
         let last = a.last().unwrap();
         assert!(last.contains("C:\\x\\;y"));
         assert!(last.ends_with("\\; claude\""));
+        let root = wt_args("X", "#000000", "D:\\", "e", false, false);
+        assert!(root.iter().any(|x| x == "-d \"D:\\\\\""), "{:?}", root);
         let b = wt_args("X", "#000000", "C:\\", "e", true, false);
         assert_eq!(b[0], "-w new");
         assert!(!b.iter().any(|x| x.contains("-p ")));
