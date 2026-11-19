@@ -479,6 +479,18 @@ end tell"#,
     )
 }
 
+/// Solo en builds de desarrollo: deja rastro de qué camino de lanzamiento se usó.
+#[allow(unused_variables, dead_code)]
+fn debug_log(msg: &str) {
+    #[cfg(debug_assertions)]
+    {
+        use std::io::Write;
+        if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(std::env::temp_dir().join("claude-perfiles-debug.log")) {
+            let _ = writeln!(f, "{}", msg);
+        }
+    }
+}
+
 // ---------------------------------------------------------------- instalar desde la app
 //
 // Todo a la vista: el comando corre en una ventana de terminal que el usuario ve (y puede
@@ -518,7 +530,9 @@ fn plan(id: &str) -> Option<Plan> {
         ));
     }
     Some(match id {
-        "claude" => Plan::Console("irm https://claude.ai/install.ps1 | iex".into(), "el instalador oficial"),
+        // Sin winget se abre la guía oficial en vez de correr `irm … | iex`: descargar y ejecutar
+        // un script desde una app sin firmar es justo lo que los antivirus marcan.
+        "claude" => Plan::Page("https://code.claude.com/docs/en/setup"),
         "wt" => Plan::Page("ms-windows-store://pdp/?ProductId=9N0DX20HK701"),
         "warp" => Plan::Page("https://www.warp.dev/download"),
         _ => Plan::Page("https://tabby.sh"),
@@ -614,7 +628,12 @@ fn run_visible(_label: &str, _cmd: &str) -> Result<(), String> {
 
 pub fn open_url(url: &str) -> Result<(), String> {
     #[cfg(windows)]
-    return shell_execute(Path::new(url), "");
+    return shell_execute(Path::new(url), "").or_else(|_| {
+        // mismo problema que con wt.exe: si ShellExecute no anda desde esta app, un cmd hijo sí
+        let mut c = Command::new(sys_root().join(r"System32\cmd.exe"));
+        c.raw_arg(format!("/d /c start \"\" \"{}\"", url)).creation_flags(CREATE_NO_WINDOW);
+        spawn(c)
+    });
     #[cfg(target_os = "macos")]
     {
         let mut c = Command::new("/usr/bin/open");
@@ -696,21 +715,29 @@ fn expand_env(s: &str) -> String {
 #[cfg(windows)]
 fn shell_execute(file: &Path, params: &str) -> Result<(), String> {
     use std::os::windows::ffi::OsStrExt;
-    use windows_sys::Win32::UI::Shell::ShellExecuteW;
+    use windows_sys::Win32::UI::Shell::{ShellExecuteExW, SEE_MASK_FLAG_NO_UI, SEE_MASK_NOASYNC, SHELLEXECUTEINFOW};
     use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
     let w = |s: &std::ffi::OsStr| s.encode_wide().chain(Some(0)).collect::<Vec<u16>>();
     let (verb, f, p) = (w("open".as_ref()), w(file.as_os_str()), w(params.as_ref()));
-    // Devuelve un valor > 32 si salió bien (API de Win16, documentada así).
-    let r = unsafe { ShellExecuteW(std::ptr::null_mut(), verb.as_ptr(), f.as_ptr(), p.as_ptr(), std::ptr::null(), SW_SHOWNORMAL) } as isize;
-    if r > 32 {
-        Ok(())
-    } else {
-        Err(match r {
-            2 | 3 => "no se encontró el programa".into(),
-            5 => "el sistema no dio permiso".into(),
-            n => format!("error del sistema {}", n),
-        })
+    // NOASYNC: la activación de apps de la Store termina en otro hilo; sin esto, si la app se
+    // cierra enseguida (atajo del Escritorio) la terminal nunca llega a abrirse.
+    let mut info: SHELLEXECUTEINFOW = unsafe { std::mem::zeroed() };
+    info.cbSize = std::mem::size_of::<SHELLEXECUTEINFOW>() as u32;
+    info.fMask = SEE_MASK_NOASYNC | SEE_MASK_FLAG_NO_UI;
+    info.lpVerb = verb.as_ptr();
+    info.lpFile = f.as_ptr();
+    info.lpParameters = p.as_ptr();
+    info.nShow = SW_SHOWNORMAL as i32;
+    if unsafe { ShellExecuteExW(&mut info) } != 0 {
+        return Ok(());
     }
+    Err(match std::io::Error::last_os_error().raw_os_error() {
+        Some(2) | Some(3) => "no se encontró el programa".into(),
+        Some(5) => "el sistema no dio permiso".into(),
+        Some(1920) => "Windows no dejó ejecutarla".into(),
+        Some(n) => format!("error del sistema {}", n),
+        None => "error inesperado".into(),
+    })
 }
 
 /// Línea de PowerShell que fija (o limpia) CLAUDE_CONFIG_DIR. Legible, sin base64.
@@ -763,17 +790,14 @@ fn platform_launch(l: &CodeLaunch, id: &str, info: Option<&TermInfo>, cfg: Optio
         "wt" => {
             let profile = ensure_wt_fragment();
             let args = wt_args(l.name, &l.color, &folder.to_string_lossy(), &env_line, l.new_window, profile);
-            // wt.exe es un alias de app de la Store: CreateProcess a veces falla (error 1920) según
-            // cómo se abrió esta app; ShellExecute lo activa como lo haría el menú Inicio.
-            // Si Windows le puso a esta app un shim de compatibilidad (Program Compatibility
-            // Assistant, `__COMPAT_LAYER`), el proceso no puede activar apps de la Store ni con
-            // ShellExecute; un `cmd /c start` hijo sí. Los argumentos van todos entre comillas,
-            // así que cmd no interpreta & | < > ^ de rutas o nombres.
-            shell_execute(Path::new("wt.exe"), &args.join(" ")).or_else(|_| {
-                let mut c = Command::new(PathBuf::from(std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into())).join(r"System32\cmd.exe"));
-                c.raw_arg(format!("/d /c start \"\" wt.exe {}", args.join(" "))).creation_flags(CREATE_NO_WINDOW);
-                spawn(c)
-            })
+            // wt.exe es un alias de app de la Store. Desde esta app (con WebView2 cargado) ni
+            // CreateProcess (error 1920) ni ShellExecute (error 5) lo pueden activar de forma
+            // confiable; un `cmd /c start` hijo sí, y además no depende de que esta app siga
+            // abierta (atajos del Escritorio). Los argumentos van entre comillas, así que cmd no
+            // interpreta & | < > ^ de rutas o nombres.
+            let mut c = Command::new(sys_root().join(r"System32\cmd.exe"));
+            c.raw_arg(format!("/d /c start \"\" wt.exe {}", args.join(" "))).creation_flags(CREATE_NO_WINDOW);
+            spawn(c)
         }
         _ => {
             let title = format!("{} · Claude Code", l.name);

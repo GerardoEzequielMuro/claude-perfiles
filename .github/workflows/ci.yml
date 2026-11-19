@@ -42,7 +42,10 @@ jobs:
 
       - name: Instalar iTerm2 para probar su AppleScript y la detección
         if: runner.os == 'macOS'
-        run: brew install --cask iterm2
+        run: |
+          brew install --cask iterm2
+          # que Launch Services la conozca por bundle id, como en una Mac donde ya se usó
+          /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f /Applications/iTerm.app
 
       - name: Tests (Mac), incluidos los que necesitan macOS
         if: runner.os == 'macOS'
@@ -61,7 +64,7 @@ jobs:
         run: |
           APP=$(find src-tauri/target/universal-apple-darwin/release/bundle/macos -name "*.app" -maxdepth 1 | head -1)
           plutil -p "$APP/Contents/Info.plist" | grep NSAppleEventsUsageDescription
-          codesign -dv "$APP" 2>&1 | tee /dev/stderr | grep -q "Signature=adhoc"
+          codesign -dv "$APP" 2>&1 | tee /dev/stderr | grep "Signature=adhoc"
           lipo -archs "$APP"/Contents/MacOS/*
 
       - uses: actions/upload-artifact@v4

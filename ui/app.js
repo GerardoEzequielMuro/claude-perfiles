@@ -273,6 +273,8 @@ async function terminalMenu(anchor) {
   // volver a detectar: puede haber instalado o desinstalado una terminal con la app abierta
   await invoke("rescan_terminals").catch(() => {});
   await refresh();
+  // refresh() rehace los avisos: si el menú se abrió desde el botón de un aviso, ese botón ya no existe
+  if (!anchor.isConnected) anchor = $("termBtn");
   const s = snap;
   const cur = s.terminals.find((t) => t.id === s.terminal);
   const items = [mLabel("Claude Code se abre en")];

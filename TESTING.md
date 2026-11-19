@@ -33,14 +33,16 @@ Solo en Mac (CI, `cargo test --lib -- --ignored mac_`):
 | Code en PowerShell suelto | probado | `claude.exe ← powershell` |
 | Terminal guardada (Warp) no instalada → aviso arriba, Code abre en la del sistema, botón "Elegir terminal" | simulado | captura |
 | Lo mismo, lanzado desde un atajo o la bandeja → aviso dentro de la app | simulado | captura |
-| Windows Terminal no arranca → abre en PowerShell **avisando** | probado | fallado y corregido (ver abajo) |
+| Windows Terminal con la app abierta y con la app cerrada (atajo) | probado | fallado y corregido (ver abajo) |
+| Atajo con la app cerrada y terminal faltante → diálogo del sistema, Code abre igual y la app se cierra al aceptar | probado | captura |
+| Si la terminal elegida no arranca → abre en PowerShell **avisando** | simulado | captura |
 | Menú: las que faltan aparecen con "Instalar … · con winget" | simulado | captura |
 | `winget install` de los 4 paquetes (`Anthropic.ClaudeCode`, `Microsoft.WindowsTerminal`, `Warp.Warp`, `Eugeny.Tabby`) | probado | `winget show` encuentra los 4; el install de WT corrido de verdad |
-| Ventana visible de instalación desde la app | no probado | el entorno de prueba mata los procesos hijos; probar a mano (paso 3 abajo) |
+| Ventana visible de instalación desde la app (winget corre y la ventana queda abierta) | probado | con `--install wt` (flag solo de desarrollo) |
 | Aviso "No encuentro Claude Code" con botón Instalar | probado | captura con datos de prueba |
 | Code en Warp y en Tabby | probado en v1/v2.0 | sin cambios de lógica en Windows salvo `shell = "pwsh"/"powershell"` en el TOML de Warp |
 
-**Fallado y corregido:** si Windows le pone a la app un shim de compatibilidad (el Program Compatibility Assistant, `__COMPAT_LAYER`), el proceso no puede abrir `wt.exe`: ni CreateProcess (error 1920) ni ShellExecute (error 5). Ahora lo intenta con ShellExecute y, si falla, con `cmd /c start`, que sí anda. Si eso también falla, abre PowerShell y avisa.
+**Fallado y corregido:** desde la app (con WebView2 cargado) no se puede activar `wt.exe`, que es un alias de app de la Store. CreateProcess da error 1920 y ShellExecute da error 5 con la app abierta, o devuelve OK sin abrir nada si la app se cierra enseguida. Pasa igual con una copia limpia del exe, así que no es un shim de compatibilidad. Ahora se lanza con un `cmd /c start` hijo, que anda en los dos casos. Si falla, abre PowerShell y avisa. Probado con la app abierta y con la app cerrada (atajo del Escritorio).
 
 ## Mac: pendiente de validación manual en Mac
 
@@ -73,4 +75,5 @@ Si algo falla, una captura y la versión de macOS alcanzan para arreglarlo.
 - La Mac no está validada a mano (arriba están los pasos).
 - La app no está firmada: SmartScreen y Gatekeeper avisan la primera vez. La firma (Apple USD 99 por año, Windows con certificado) es una decisión pendiente.
 - Warp en Windows: el comando usa sintaxis de PowerShell y el TOML pide `shell = "pwsh"` o `"powershell"`. Si Warp no respeta `shell`, depende de que la shell por defecto de Warp sea PowerShell.
-- El instalador de Claude Code sin winget (`irm … | iex`) es el oficial, pero es el tipo de comando que algunos antivirus miran con desconfianza. Solo se usa si no hay winget, y en una ventana visible.
+- Sin winget, la app no corre `irm … | iex` (un antivirus lo vería como un descargador): abre la guía oficial de instalación.
+- El build de release (MSVC, el que bajan los colegas) solo lo prueba CI. Falta instalarlo en una PC y pasarle Avast.

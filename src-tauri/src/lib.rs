@@ -385,6 +385,20 @@ fn handle_cli(app: &AppHandle, args: &[String], exit_after: bool) -> bool {
     let st = app.state::<AppState>();
     let mut it = args.iter().skip(1);
     while let Some(a) = it.next() {
+        // Solo en desarrollo: probar la instalación desde una instancia lanzada normalmente.
+        #[cfg(debug_assertions)]
+        if a == "--install" {
+            if let Some(id) = it.next() {
+                let r = term::install(id).map(Some);
+                let h = app.clone();
+                tell(app, r, move || {
+                    if exit_after {
+                        h.exit(0);
+                    }
+                });
+                return true;
+            }
+        }
         if a == "--desktop" || a == "--code" {
             if let Some(n) = it.next() {
                 let r = if a == "--desktop" { desktop_action(&st, n) } else { do_open_code(&st, n) };
@@ -415,7 +429,7 @@ pub fn run() {
 
     let args: Vec<String> = std::env::args().collect();
     let start_hidden = args.iter().any(|a| a == "--tray");
-    let cli_action = args.iter().any(|a| a == "--desktop" || a == "--code");
+    let cli_action = args.iter().any(|a| a == "--desktop" || a == "--code" || (cfg!(debug_assertions) && a == "--install"));
 
     let state = AppState {
         store: Mutex::new(c::load()),
@@ -470,7 +484,9 @@ pub fn run() {
             // Atajo del Escritorio (--desktop/--code) sin otra instancia abierta: lanzar y salir
             // (después del aviso, si hay uno). Sin bandeja ni ventana.
             if cli_action {
-                handle_cli(&handle, &std::env::args().collect::<Vec<_>>(), true);
+                if !handle_cli(&handle, &std::env::args().collect::<Vec<_>>(), true) {
+                    handle.exit(0); // `--code` sin nombre: no hay nada que hacer
+                }
                 return Ok(());
             }
 

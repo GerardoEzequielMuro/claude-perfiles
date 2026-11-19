@@ -4,7 +4,7 @@ Usá varias cuentas de Claude a la vez en la misma computadora. Por ejemplo, la 
 
 Cada perfil tiene su propio login en **Claude Desktop** y en **Claude Code**. Podés tener dos o tres Desktop abiertos en paralelo, cada uno con su cuenta, y abrir Code en la terminal que prefieras con la sesión de ese perfil.
 
-Funciona en **Windows 10/11** y **macOS 11 o más nuevo**. Es gratis y de código abierto (MIT). No es una app oficial de Anthropic.
+Funciona en **Windows 10/11** y **macOS 11 o más nuevo**. La versión de Mac está en **beta**: compila y pasa los tests en una Mac de CI, pero todavía nadie la probó a mano ([cómo ayudar](TESTING.md#mac-pendiente-de-validación-manual-en-mac)). Es gratis y de código abierto (MIT). No es una app oficial de Anthropic.
 
 ## Descargar
 
@@ -41,7 +41,7 @@ Si te falta alguna terminal, o Claude Code, se instala desde la misma app: en el
 | | Windows | Mac |
 |---|---|---|
 | Terminales | `winget` (si no hay, abre la página de descarga) | Homebrew (si no hay, abre la página de descarga) |
-| Claude Code | `winget install Anthropic.ClaudeCode` | el instalador oficial (`curl -fsSL https://claude.ai/install.sh \| bash`) |
+| Claude Code | `winget install Anthropic.ClaudeCode` (sin winget, abre la guía oficial) | el instalador oficial (`curl -fsSL https://claude.ai/install.sh \| bash`) |
 
 Si la terminal que tenías elegida deja de estar instalada, la app no la cambia por su cuenta: te avisa arriba, abre Code en la del sistema mientras tanto y te deja elegir otra.
 
