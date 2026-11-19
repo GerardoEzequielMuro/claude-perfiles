@@ -1,0 +1,58 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Claude Perfiles",
+  "version": "2.0.0",
+  "identifier": "ar.gerar.claudeperfiles",
+  "build": {
+    "frontendDist": "../ui"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "Claude Perfiles",
+        "width": 1000,
+        "height": 690,
+        "minWidth": 720,
+        "minHeight": 540,
+        "center": true,
+        "visible": false,
+        "backgroundColor": "#140E0B",
+        "theme": "Dark"
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; script-src 'self'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "Utility",
+    "shortDescription": "Varias cuentas de Claude en paralelo",
+    "longDescription": "Abrí Claude Desktop y Claude Code con distintas cuentas al mismo tiempo, cada una con su login y su configuración. App no oficial.",
+    "copyright": "App no oficial, sin relación con Anthropic.",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["Spanish", "English"],
+        "displayLanguageSelector": false
+      },
+      "wix": {
+        "language": "es-ES"
+      }
+    },
+    "macOS": {
+      "minimumSystemVersion": "11.0",
+      "signingIdentity": "-"
+    }
+  }
+}

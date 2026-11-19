@@ -1,0 +1,71 @@
+name: Release
+
+# Al empujar un tag vX.Y.Z se compilan los instaladores de Windows y Mac
+# y se publican en GitHub Releases.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            args: "--bundles nsis"
+          - platform: macos-latest
+            args: "--target universal-apple-darwin --bundles dmg"
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - run: npm ci
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "Claude Perfiles ${{ github.ref_name }}"
+          releaseBody: |
+            **Windows:** bajá el `.exe` (setup) y ejecutalo. Si SmartScreen avisa, tocá *Más información* y después *Ejecutar de todas formas*.
+            **Mac:** bajá el `.dmg` y arrastrá la app a Aplicaciones. La primera vez abrila con clic derecho y *Abrir*. Si macOS no te deja, andá a Ajustes del Sistema, *Privacidad y seguridad*, *Abrir de todos modos*.
+
+            La app no está firmada todavía. El código está acá mismo y los instaladores se compilan en GitHub Actions.
+          releaseDraft: false
+          prerelease: false
+          args: ${{ matrix.args }}
+
+  stable-names:
+    # Copias con nombre fijo para que la página de descarga tenga links permanentes.
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          mkdir out && cd out
+          gh release download "$TAG" -R "$REPO" -p "*-setup.exe" -p "*.dmg"
+          for f in *-setup.exe; do cp "$f" ../ClaudePerfiles-Windows.exe; done
+          for f in *.dmg; do cp "$f" ../ClaudePerfiles-Mac.dmg; done
+          cd ..
+          gh release upload "$TAG" -R "$REPO" --clobber ClaudePerfiles-Windows.exe ClaudePerfiles-Mac.dmg
